@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Data Sphere – تشفير السجلات الطبية</title>
+<style>
+  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+  header{padding:28px 16px;text-align:center;color:#fff;background:linear-gradient(135deg,#0a9396,#005f73)}
+  main{max-width:980px;margin:24px auto;padding:0 16px}
+  .card{background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.08);padding:20px;margin-bottom:20px}
+  h2{margin:0 0 10px;color:#005f73}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .col{flex:1 1 320px}
+  label{display:block;margin:10px 0 6px;font-weight:600}
+  input[type="file"],input[type="password"],input[type="number"]{width:100%;padding:10px;border:1px solid #e5e7eb;border-radius:8px}
+  button{padding:12px 16px;border:0;border-radius:10px;cursor:pointer;font-weight:700}
+  .primary{background:#0a9396;color:#fff}
+  .secondary{background:#e5f3f4}
+  .muted{color:#6b7280;font-size:.9rem}
+  progress{width:100%}
+  footer{padding:18px;text-align:center;color:#fff;background:#005f73;margin-top:28px;font-size:.9rem}
+  .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#eef7f7;margin-inline-start:8px;font-size:.85rem}
+  code{background:#f3f4f6;padding:2px 6px;border-radius:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>MedSecure Encrypt – تشفير حقيقي 100%</h1>
+  <div>AES-GCM 256 + PBKDF2-SHA-256 • كل التشفير يتم على جهازك</div>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>التشفير <span class="pill">AES-GCM 256-bit</span></h2>
+    <div class="row">
+      <div class="col">
+        <label>ملف السجل الطبي</label>
+        <input id="encFile" type="file" />
+      </div>
+      <div class="col">
+        <label>كلمة المرور (لن تُرسل لأي مكان)</label>
+        <input id="encPass" type="password" autocomplete="new-password" />
+      </div>
+      <div class="col">
+        <label>عدد دورات المشتقة (PBKDF2)</label>
+        <input id="encIter" type="number" value="250000" min="60000" step="1000" />
+      </div>
+    </div>
+    <div style="margin-top:12px" class="row">
+      <div class="col">
+        <button class="primary" id="btnEncrypt">تشفير وتنزيل (.mse)</button>
+        <button class="secondary" id="btnWipeEnc">مسح المدخلات</button>
+      </div>
+    </div>
+    <div class="muted" id="encMsg" style="margin-top:10px"></div>
+    <progress id="encProg" max="100" value="0" style="display:none;margin-top:12px"></progress>
+  </div>
+
+  <div class="card">
+    <h2>فك التشفير</h2>
+    <div class="row">
+      <div class="col">
+        <label>ملف مُشفّر (.mse)</label>
+        <input id="decFile" type="file" accept=".mse,application/octet-stream" />
+      </div>
+      <div class="col">
+        <label>كلمة المرور</label>
+        <input id="decPass" type="password" autocomplete="current-password" />
+      </div>
+    </div>
+    <div style="margin-top:12px" class="row">
+      <div class="col">
+        <button class="primary" id="btnDecrypt">فك التشفير وتنزيل الملف الأصلي</button>
+        <button class="secondary" id="btnWipeDec">مسح المدخلات</button>
+      </div>
+    </div>
+    <div class="muted" id="decMsg" style="margin-top:10px"></div>
+    <progress id="decProg" max="100" value="0" style="display:none;margin-top:12px"></progress>
+    <p class="muted" style="margin-top:10px">
+      تنسيق الملف المشفّر: <code>MSE1 | ver(1) | salt(16) | iv(12) | iter(4) | cipher...</code>
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>ملاحظات أمان مهمة</h2>
+    <ul class="muted">
+      <li>اختَر كلمة مرور قوية وطويلة. لو ضاعت كلمة المرور، **لا يمكن** استرجاع البيانات.</li>
+      <li>يُستخدم ملح عشوائي 16 بايت و IV عشوائي 12 بايت لكل عملية.</li>
+      <li>التحقق من سلامة البيانات مدمج في AES-GCM (علامة مصادقة).</li>
+      <li>التشفير محلي بالكامل؛ لا يتم رفع أي بيانات.</li>
+    </ul>
+  </div>
+
+</main>
+
+<footer>© 2025 MedSecure Encrypt — يعمل بالكامل دون اتصال</footer>
+
+<script>
+  // —— Helpers ——
+  const te = new TextEncoder();
+  const td = new TextDecoder();
+  const MAGIC = te.encode("MSE1");      // 4 bytes
+  const VERSION = 1;                    // 1 byte
+  const SALT_LEN = 16;                  // bytes
+  const IV_LEN = 12;                    // bytes (AES-GCM recommended)
+  const MIN_ITERS = 60000;
+
+  const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
+
+  function concatBuffers(...parts){
+    const total = parts.reduce((a,b)=>a + b.byteLength, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for(const p of parts){
+      out.set(new Uint8Array(p), off);
+      off += p.byteLength;
+    }
+    return out.buffer;
+  }
+
+  function u32be(n){
+    const b = new ArrayBuffer(4);
+    const v = new DataView(b);
+    v.setUint32(0, n >>> 0, false);
+    return b;
+  }
+
+  function readU32be(view, offset){
+    return view.getUint32(offset, false);
+  }
+
+  async function deriveKey(password, salt, iterations){
+    const keyMat = await crypto.subtle.importKey(
+      "raw", te.encode(password), {name:"PBKDF2"}, false, ["deriveKey"]
+    );
+    return crypto.subtle.deriveKey(
+      {name:"PBKDF2", salt, iterations, hash:"SHA-256"},
+      keyMat,
+      {name:"AES-GCM", length:256},
+      false,
+      ["encrypt","decrypt"]
+    );
+  }
+
+  // —— Encrypt ——
+  async function encryptFile(file, password, iterations){
+    if(!file) throw new Error("اختر ملفًا للتشفير.");
+    if(!password || password.length < 8) throw new Error("استخدم كلمة مرور لا تقل عن 8 أحرف.");
+    if(iterations < MIN_ITERS) throw new Error(`عدد الدورات يجب أن يكون ≥ ${MIN_ITERS}.`);
+
+    const salt = rand(SALT_LEN);
+    const iv = rand(IV_LEN);
+    const key = await deriveKey(password, salt, iterations);
+
+    const plain = new Uint8Array(await file.arrayBuffer());
+    const cipher = new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM", iv}, key, plain));
+
+    // ملف مشفّر: MAGIC(4) | VER(1) | SALT(16) | IV(12) | ITER(4) | CIPHER(n)
+    const header = concatBuffers(
+      MAGIC.buffer,
+      new Uint8Array([VERSION]).buffer,
+      salt.buffer,
+      iv.buffer,
+      u32be(iterations)
+    );
+    const wrapped = concatBuffers(header, cipher.buffer);
+    return new Blob([wrapped], {type:"application/octet-stream"});
+  }
+
+  // —— Decrypt ——
+  async function decryptFile(encFile, password){
+    if(!encFile) throw new Error("اختر ملفًا مُشفّرًا.");
+    if(!password) throw new Error("أدخل كلمة المرور.");
+
+    const buf = new Uint8Array(await encFile.arrayBuffer());
+    const view = new DataView(buf.buffer);
+
+    // تحقق من الترويسة
+    if(td.decode(buf.slice(0,4)) !== "MSE1") throw new Error("تنسيق غير معروف.");
+    const ver = buf[4];
+    if(ver !== VERSION) throw new Error(`إصدار غير مدعوم: ${ver}.`);
+
+    let off = 5;
+    const salt = buf.slice(off, off+SALT_LEN); off += SALT_LEN;
+    const iv   = buf.slice(off, off+IV_LEN);   off += IV_LEN;
+    const iters = readU32be(view, off);        off += 4;
+    if(iters < MIN_ITERS) throw new Error("ملف بتكوين غير آمن (iterations منخفضة).");
+
+    const cipher = buf.slice(off);
+    const key = await deriveKey(password, salt, iters);
+
+    try{
+      const plain = new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM", iv}, key, cipher));
+      return new Blob([plain], {type:"application/octet-stream"});
+    }catch(e){
+      // عادةً يعني كلمة مرور خاطئة أو بيانات تالفة
+      throw new Error("فشل فك التشفير: كلمة مرور خاطئة أو ملف تالف.");
+    }
+  }
+
+  // —— UI Wiring ——
+  const $ = (id)=>document.getElementById(id);
+  const encFile = $("encFile"), encPass = $("encPass"), encIter = $("encIter");
+  const btnEncrypt = $("btnEncrypt"), encMsg = $("encMsg"), encProg = $("encProg");
+  const btnWipeEnc = $("btnWipeEnc");
+
+  const decFile = $("decFile"), decPass = $("decPass");
+  const btnDecrypt = $("btnDecrypt"), decMsg = $("decMsg"), decProg = $("decProg");
+  const btnWipeDec = $("btnWipeDec");
+
+  function downloadBlob(blob, filename){
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 100);
+  }
+
+  btnEncrypt.addEventListener("click", async ()=>{
+    encMsg.textContent = ""; encProg.style.display="block"; encProg.value=5;
+    try{
+      const iters = parseInt(encIter.value,10)||250000;
+      const blob = await encryptFile(encFile.files[0], encPass.value, iters);
+      encProg.value=90;
+      const outName = (encFile.files[0]?.name || "file") + ".mse";
+      downloadBlob(blob, outName);
+      encProg.value=100;
+      encMsg.textContent = "تم التشفير بنجاح وتنزيل الملف المشفّر.";
+    }catch(err){
+      encMsg.textContent = "خطأ: " + err.message;
+    }finally{
+      setTimeout(()=>encProg.style.display="none", 600);
+    }
+  });
+
+  btnWipeEnc.addEventListener("click", ()=>{
+    encFile.value = ""; encPass.value = ""; encIter.value = 250000; encMsg.textContent = "";
+  });
+
+  btnDecrypt.addEventListener("click", async ()=>{
+    decMsg.textContent = ""; decProg.style.display="block"; decProg.value=5;
+    try{
+      const out = await decryptFile(decFile.files[0], decPass.value);
+      decProg.value=90;
+      // محاولة استرجاع اسم أصلي مبسطة
+      const name = (decFile.files[0]?.name || "decrypted.mse").replace(/\.mse$/i,"") || "decrypted";
+      downloadBlob(out, name);
+      decProg.value=100;
+      decMsg.textContent = "تم فك التشفير وتنزيل الملف الأصلي.";
+    }catch(err){
+      decMsg.textContent = "خطأ: " + err.message;
+    }finally{
+      setTimeout(()=>decProg.style.display="none", 600);
+    }
+  });
+
+  btnWipeDec.addEventListener("click", ()=>{
+    decFile.value = ""; decPass.value = ""; decMsg.textContent = "";
+  });
+</script>
+</body>
+</html>
